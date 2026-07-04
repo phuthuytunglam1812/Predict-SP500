@@ -1,0 +1,26 @@
+{
+    "base": {
+        "stock_pct": 40,
+        "bond_pct": 60,
+        "avg_return": 0.15550471698113208,
+        "volatility": 1.0829654712327168,
+        "risk_adjusted_score": 0.14359157435012618,
+        "confidence": "high"
+    },
+    "bear": {
+        "stock_pct": 100,
+        "bond_pct": 0,
+        "avg_return": 0.20894736842105263,
+        "volatility": 2.0623689042157376,
+        "risk_adjusted_score": 0.1013142546873832,
+        "confidence": "high"
+    },
+    "bull": {
+        "stock_pct": 100,
+        "bond_pct": 0,
+        "avg_return": 0.10529411764705887,
+        "volatility": 0.8245374655439021,
+        "risk_adjusted_score": 0.12770082870352303,
+        "confidence": "high"
+    }
+}
