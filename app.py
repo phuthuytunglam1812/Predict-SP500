@@ -179,6 +179,17 @@ CSS = """
     .market-stat-row strong { color: var(--ink); font-family: var(--mono); font-size: 0.94rem; text-align: right; }
     .market-stat-row strong.good { color: var(--success); }
     .market-stat-row strong.bad { color: var(--danger); }
+    .allocation-guide { border: 1px solid var(--line); background: linear-gradient(145deg, rgba(15,23,42,0.92), rgba(2,6,23,0.72)); border-radius: 16px; padding: 1rem 1.1rem; margin: 1rem 0 1.15rem; box-shadow: 0 20px 55px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.05); }
+    .allocation-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: end; border-bottom: 1px solid rgba(148,163,184,0.18); padding-bottom: 0.85rem; margin-bottom: 0.4rem; }
+    .allocation-title { color: var(--ink); font-family: var(--mono); font-weight: 900; font-size: 1.05rem; letter-spacing: 0.04em; text-transform: uppercase; }
+    .allocation-subtitle { color: var(--muted); font-size: 0.82rem; margin-top: 0.22rem; }
+    .allocation-current { color: var(--success); font-family: var(--mono); font-size: 2rem; font-weight: 900; text-shadow: 0 0 20px rgba(52,211,153,0.32); text-align: right; }
+    .allocation-money { color: var(--muted); font-size: 0.82rem; text-align: right; }
+    .allocation-table { width: 100%; border-collapse: collapse; margin-top: 0.35rem; }
+    .allocation-table th { color: var(--muted); font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; text-align: left; padding: 0.7rem 0.55rem; border-bottom: 1px solid rgba(148,163,184,0.22); }
+    .allocation-table td { color: var(--ink); padding: 0.72rem 0.55rem; border-bottom: 1px solid rgba(148,163,184,0.12); vertical-align: top; font-size: 0.9rem; }
+    .allocation-table td:last-child { color: var(--ink); font-family: var(--mono); font-weight: 850; text-align: right; white-space: nowrap; }
+    .allocation-note { color: var(--muted); font-size: 0.78rem; line-height: 1.35; margin-top: 0.72rem; }
     .stButton > button { border-radius: 10px; border: 1px solid var(--accent); color: #061017; background: var(--accent); min-height: 2.55rem; font-weight: 800; box-shadow: 0 0 24px rgba(45, 212, 191, 0.18); }
     .stButton > button:hover { border-color: var(--accent-2); background: var(--accent-2); color: #020617; }
     div[data-testid="stSlider"] label,
@@ -619,6 +630,112 @@ def allocation_signal(result: dict, latest: pd.Series, actual_cpi: float) -> dic
     row = lookup.get(regime) or lookup.get("base") or {}
     return normalize_allocation_row(row, regime, "allocation_lookup")
 
+
+def get_openai_api_key() -> str | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets.get("OPENAI_API_KEY", None)
+        except Exception:
+            api_key = None
+    return api_key
+
+
+def get_openai_model(default: str = "gpt-4.1-mini") -> str:
+    model = os.getenv("OPENAI_MODEL", default)
+    try:
+        model = st.secrets.get("OPENAI_MODEL", model)
+    except Exception:
+        pass
+    return model
+
+
+def extract_json_object(text: str) -> dict:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+    try:
+        data = json.loads(text[start : end + 1])
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def ai_allocation_signal(
+    base_allocation: dict[str, str | int | float],
+    result: dict,
+    latest: pd.Series,
+    actual_cpi: float,
+    forecast_cpi: float,
+) -> dict[str, str | int | float]:
+    api_key = get_openai_api_key()
+    if not api_key:
+        return base_allocation
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        prompt = f"""
+        You are adjusting an educational stock/bond allocation signal for a finance dashboard.
+        Combine the file-based allocation rule with the model outputs and macro context.
+        This is not personalized investment advice. Do not use personal risk tolerance or investor age.
+
+        Baseline file allocation:
+        - Source: {base_allocation.get('source')}
+        - Regime: {base_allocation.get('regime')}
+        - Stocks: {base_allocation.get('stocks_pct')}%
+        - Bonds: {base_allocation.get('bonds_pct')}%
+        - Baseline note: {base_allocation.get('note')}
+
+        Model and macro context:
+        - Actual CPI: {actual_cpi}
+        - Forecast CPI: {forecast_cpi}
+        - CPI surprise: {result['actual_surprise']}
+        - Pre-release expected surprise: {result['predicted_surprise']}
+        - Surprise direction model: {result['surprise_direction']} at {result['surprise_confidence']:.1f}%
+        - SPX impact model: {result['spx_direction']} at {result['spx_probability']:.1f}%
+        - Similar historical events: {result['similar_events_count']}
+        - Similar up/down: {result['similar_events_up']} up, {result['similar_events_down']} down
+        - VIX return: {latest['VIX_Return_Pct']}%
+        - Fed Funds Rate: {latest['FedFunds_Rate']}%
+        - Fed Funds 3M Change: {latest.get('FedFunds_Change_3M', 0.0)}%
+
+        Rules:
+        - Return JSON only.
+        - stocks_pct and bonds_pct must be integers between 0 and 100 and sum to 100.
+        - Prefer increments of 10.
+        - Treat the baseline file allocation as the anchor; only adjust if the model context gives a clear reason.
+        - Keep the explanation causal and short.
+
+        JSON schema:
+        {{"stocks_pct": 30, "bonds_pct": 70, "reason": "short causal reason"}}
+        """
+        response = client.responses.create(
+            model=get_openai_model(),
+            input=prompt,
+            max_output_tokens=180,
+        )
+        data = extract_json_object(response.output_text)
+        stocks_pct = int(round(float(data.get("stocks_pct"))))
+        bonds_pct = int(round(float(data.get("bonds_pct"))))
+        if stocks_pct < 0 or stocks_pct > 100 or bonds_pct < 0 or bonds_pct > 100:
+            return base_allocation
+        if stocks_pct + bonds_pct != 100:
+            bonds_pct = 100 - stocks_pct
+        reason = str(data.get("reason", "AI reviewed the file-based allocation and model context.")).strip()
+        final_allocation = dict(base_allocation)
+        final_allocation["stocks_pct"] = stocks_pct
+        final_allocation["bonds_pct"] = bonds_pct
+        final_allocation["allocation"] = f"{stocks_pct}/{bonds_pct}"
+        final_allocation["tone"] = "positive" if stocks_pct >= 70 else "negative" if stocks_pct <= 40 else "neutral"
+        final_allocation["note"] = f"AI blended with {base_allocation.get('source')} ({base_allocation.get('regime')}): {reason}"
+        final_allocation["source"] = f"{base_allocation.get('source')} + AI"
+        return final_allocation
+    except Exception:
+        return base_allocation
+
 def money_split(amount: float, allocation: dict[str, str | int]) -> tuple[float, float]:
     stocks_amount = float(amount) * int(allocation["stocks_pct"]) / 100
     bonds_amount = float(amount) * int(allocation["bonds_pct"]) / 100
@@ -665,24 +782,14 @@ def fallback_reasoning(actual_cpi: float, forecast_cpi: float, result: dict, lat
     return [inflation_mechanism, model_mechanism, volatility_mechanism, final_mechanism]
 
 def openai_reasoning(actual_cpi: float, forecast_cpi: float, result: dict, latest: pd.Series) -> tuple[list[str], str]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        try:
-            api_key = st.secrets.get("OPENAI_API_KEY", None)
-        except Exception:
-            api_key = None
+    api_key = get_openai_api_key()
     if not api_key:
         return fallback_reasoning(actual_cpi, forecast_cpi, result, latest), "Fallback reasoning"
 
     try:
         from openai import OpenAI
 
-        model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        try:
-            model = st.secrets.get("OPENAI_MODEL", model)
-        except Exception:
-            pass
-
+        model = get_openai_model()
         client = OpenAI(api_key=api_key)
         prompt = f"""
         Create exactly 4 concise English bullets for a finance dashboard reasoning layer.
@@ -851,6 +958,7 @@ with st.sidebar:
     )
     st.number_input(
         "Exact Actual CPI YoY (%)",
+        label_visibility="collapsed",
         min_value=-5.0,
         max_value=20.0,
         step=0.10,
@@ -870,6 +978,7 @@ with st.sidebar:
     )
     st.number_input(
         "Exact Forecast CPI YoY (%)",
+        label_visibility="collapsed",
         min_value=-5.0,
         max_value=20.0,
         step=0.10,
@@ -925,7 +1034,8 @@ portfolio_amount = float(st.session_state.portfolio_amount)
 if run_analysis:
     result = predict(actual_cpi=actual_cpi, forecast_cpi=forecast_cpi, recent_data=history)
     actual_surprise = float(result["actual_surprise"])
-    allocation = allocation_signal(result, latest, actual_cpi)
+    base_allocation = allocation_signal(result, latest, actual_cpi)
+    allocation = ai_allocation_signal(base_allocation, result, latest, actual_cpi, forecast_cpi)
     stocks_amount, bonds_amount = money_split(portfolio_amount, allocation)
     bullets, reasoning_source = openai_reasoning(actual_cpi, forecast_cpi, result, latest)
     st.session_state.analysis = {
@@ -1001,6 +1111,34 @@ with card_cols[4]:
         allocation["tone"],
     )
 
+st.markdown(
+    f"""
+    <div class="allocation-guide">
+        <div class="allocation-head">
+            <div>
+                <div class="allocation-title">Allocation Guide</div>
+                <div class="allocation-subtitle">Current model/AI split plus common educational scenarios and purposes.</div>
+            </div>
+            <div>
+                <div class="allocation-current">{allocation['allocation']}</div>
+                <div class="allocation-money">Stocks ${stocks_amount:,.0f} / Bonds ${bonds_amount:,.0f}</div>
+            </div>
+        </div>
+        <table class="allocation-table">
+            <thead><tr><th>Situation</th><th>Purpose</th><th>Stock / Bond Split</th></tr></thead>
+            <tbody>
+                <tr><td>Current CPI + model setup</td><td>Blend allocation rules, model output, and AI reasoning for this dashboard scenario.</td><td>{allocation['allocation']}</td></tr>
+                <tr><td>Young, long-term investing, 10+ years</td><td>Maximize long-run growth while accepting larger short-term swings.</td><td>80/20 or 90/10</td></tr>
+                <tr><td>Moderate risk, 5-10 years</td><td>Balance growth from stocks with stability from bonds.</td><td>60/40</td></tr>
+                <tr><td>Worried about short-term volatility or CPI shock</td><td>Reduce sensitivity to equity drawdowns and inflation-surprise volatility.</td><td>50/50 or 40/60</td></tr>
+                <tr><td>Need money within 1-3 years</td><td>Prioritize liquidity and capital preservation over stock-market upside.</td><td>Mostly cash, T-bills, money market, short-term bonds</td></tr>
+            </tbody>
+        </table>
+        <div class="allocation-note">{allocation['note']}. Educational research output only, not personalized financial advice.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 chart_left, chart_right = st.columns([0.42, 0.58], gap="large")
 with chart_left:
     st.markdown(f"## {term('Surprise Gauge', 'A visual scale showing how far actual CPI was above or below forecast.')}", unsafe_allow_html=True)

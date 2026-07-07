@@ -1,10 +1,10 @@
 {
     "deflation_recession": {
-        "stock_pct": 10,
-        "bond_pct": 90,
-        "avg_return": 0.38385714285714273,
-        "volatility": 1.6312521893800302,
-        "risk_adjusted_score": 0.23531440776366438,
+        "stock_pct": 20,
+        "bond_pct": 80,
+        "avg_return": 0.3419999999999998,
+        "volatility": 1.453505851126599,
+        "risk_adjusted_score": 0.2352931704643079,
         "confidence": "low_confidence_small_sample"
     },
     "deflation_tightening": {
@@ -16,19 +16,19 @@
         "confidence": "low_confidence_small_sample"
     },
     "goldilocks_bull": {
-        "stock_pct": 100,
-        "bond_pct": 0,
-        "avg_return": 0.11584905660377358,
-        "volatility": 0.776346061719366,
-        "risk_adjusted_score": 0.14922347431917643,
+        "stock_pct": 80,
+        "bond_pct": 20,
+        "avg_return": 0.07850314465408809,
+        "volatility": 0.7192018171064622,
+        "risk_adjusted_score": 0.10915315115571711,
         "confidence": "high"
     },
     "high_inflation_stable": {
-        "stock_pct": 0,
-        "bond_pct": 100,
-        "avg_return": -0.09833333333333333,
-        "volatility": 1.2807427857822717,
-        "risk_adjusted_score": -0.07677836207624764,
+        "stock_pct": 20,
+        "bond_pct": 80,
+        "avg_return": -0.13022222222222224,
+        "volatility": 1.1118802893197535,
+        "risk_adjusted_score": -0.11711892320880334,
         "confidence": "low_confidence_small_sample"
     },
     "hyper_inflation_tightening": {
@@ -40,19 +40,19 @@
         "confidence": "high"
     },
     "reflation_base": {
-        "stock_pct": 0,
-        "bond_pct": 100,
-        "avg_return": 0.5995833333333332,
-        "volatility": 1.880305652606039,
-        "risk_adjusted_score": 0.31887546181778015,
+        "stock_pct": 30,
+        "bond_pct": 70,
+        "avg_return": 0.3901698717948717,
+        "volatility": 1.269412540744902,
+        "risk_adjusted_score": 0.30736254706127036,
         "confidence": "high"
     },
     "stable_growth_easing": {
-        "stock_pct": 40,
-        "bond_pct": 60,
-        "avg_return": 0.41869999999999996,
-        "volatility": 1.3558990401732935,
-        "risk_adjusted_score": 0.3087988025616473,
+        "stock_pct": 50,
+        "bond_pct": 50,
+        "avg_return": 0.3680277777777778,
+        "volatility": 1.2153719512264725,
+        "risk_adjusted_score": 0.3028108205116867,
         "confidence": "high"
     },
     "stable_growth_tightening": {
