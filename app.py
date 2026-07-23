@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import os
 import urllib.parse
@@ -811,7 +812,11 @@ def allocation_scenario_rows(allocation: dict[str, str | int | float], result: d
 
 def allocation_rows_html(rows: list[dict[str, str]]) -> str:
     return "".join(
-        f"<tr><td>{row['situation']}</td><td>{row['purpose']}</td><td>{row['split']}</td></tr>"
+        "<tr>"
+        f"<td>{html.escape(str(row['situation']))}</td>"
+        f"<td>{html.escape(str(row['purpose']))}</td>"
+        f"<td>{html.escape(str(row['split']))}</td>"
+        "</tr>"
         for row in rows
     )
 def money_split(amount: float, allocation: dict[str, str | int]) -> tuple[float, float]:
@@ -1205,12 +1210,9 @@ st.markdown(
         </div>
         <table class="allocation-table">
             <thead><tr><th>Situation</th><th>Purpose</th><th>Stock / Bond Split</th></tr></thead>
-            <tbody>
-                {allocation_rows_html(allocation_rows)}
-
-            </tbody>
+            <tbody>{allocation_rows_html(allocation_rows)}</tbody>
         </table>
-        <div class="allocation-note">{allocation['note']}. Educational research output only, not personalized financial advice.</div>
+        <div class="allocation-note">{html.escape(str(allocation['note']))}. Educational research output only, not personalized financial advice.</div>
     </div>
     """,
     unsafe_allow_html=True,
