@@ -5,7 +5,7 @@ A Streamlit dashboard that helps first-time investing users understand how CPI s
 The app combines:
 
 - CPI release inputs: actual CPI, forecast CPI, and portfolio amount
-- Week 2 ML models for CPI surprise, CPI surprise direction, and SPX direction
+- ML models for CPI surprise, CPI surprise direction, and SPX direction
 - Historical CPI/SPX comparison charts
 - OpenAI-powered reasoning bullets
 - OpenAI-assisted stock/bond allocation review

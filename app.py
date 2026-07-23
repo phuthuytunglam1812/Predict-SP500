@@ -113,7 +113,7 @@ CSS = """
         top: 4.8rem;
         transform: translateX(-50%);
         white-space: normal;
-        z-index: 100000;
+        z-index: 2147483647 !important;
     }
     .term .definition-box::before {
         display: none;
@@ -131,7 +131,26 @@ CSS = """
     .term:hover { z-index: 100000; }
     .term:hover .definition-box {
         display: block;
-        z-index: 100000;
+        z-index: 2147483647 !important;
+    }
+    .metric-card,
+    .flow-card,
+    .context-item,
+    .allocation-guide { position: relative; overflow: visible; }
+    .metric-card:hover,
+    .flow-card:hover,
+    .context-item:hover,
+    .allocation-guide:hover { z-index: 2147483000 !important; }
+    div[data-testid="column"]:has(.metric-card .term:hover),
+    div[data-testid="column"]:has(.context-item .term:hover),
+    div[data-testid="column"]:has(.allocation-guide .term:hover) {
+        position: relative !important;
+        overflow: visible !important;
+        z-index: 1000 !important;
+    }
+    header[data-testid="stHeader"],
+    div[data-testid="stToolbar"] {
+        z-index: 2147483600 !important;
     }
     .status-strip {
         border: 1px solid var(--line-strong);
@@ -736,6 +755,65 @@ def ai_allocation_signal(
     except Exception:
         return base_allocation
 
+
+def clamp_stock_pct(value: float) -> int:
+    return int(max(0, min(100, round(value / 10) * 10)))
+
+
+def split_label(stock_pct: int) -> str:
+    stock_pct = clamp_stock_pct(stock_pct)
+    return f"{stock_pct}/{100 - stock_pct}"
+
+
+def allocation_scenario_rows(allocation: dict[str, str | int | float], result: dict) -> list[dict[str, str]]:
+    base_stock = int(allocation.get("stocks_pct", 60))
+    direction = str(result.get("spx_direction", "Neutral"))
+    probability = float(result.get("spx_probability") or 0.0)
+    market_tilt = 0
+    if direction == "Up" and probability >= 70:
+        market_tilt = 10
+    elif direction == "Down" and probability >= 70:
+        market_tilt = -10
+
+    long_term = clamp_stock_pct(base_stock + 30 + market_tilt)
+    moderate = clamp_stock_pct(base_stock + 15 + market_tilt)
+    shock = clamp_stock_pct(base_stock - 10 + min(market_tilt, 0))
+    short_term = clamp_stock_pct(min(20, base_stock - 30))
+
+    return [
+        {
+            "situation": "Current CPI + model setup",
+            "purpose": "Blend allocation rules, model output, and AI reasoning for this dashboard scenario.",
+            "split": allocation["allocation"],
+        },
+        {
+            "situation": "Young, long-term investing, 10+ years",
+            "purpose": "Still growth-oriented, but shifted by the current market signal instead of using a fixed textbook split.",
+            "split": f"{split_label(long_term)} growth tilt",
+        },
+        {
+            "situation": "Moderate risk, 5-10 years",
+            "purpose": "Balance growth and stability, using the current model split as the center of gravity.",
+            "split": split_label(moderate),
+        },
+        {
+            "situation": "Worried about short-term volatility or CPI shock",
+            "purpose": "Move more defensive when inflation surprise or volatility risk makes the setup less comfortable.",
+            "split": split_label(shock),
+        },
+        {
+            "situation": "Need money within 1-3 years",
+            "purpose": "Prioritize liquidity and capital preservation; market upside matters less than avoiding forced selling.",
+            "split": f"{split_label(short_term)} or mostly cash / T-bills",
+        },
+    ]
+
+
+def allocation_rows_html(rows: list[dict[str, str]]) -> str:
+    return "".join(
+        f"<tr><td>{row['situation']}</td><td>{row['purpose']}</td><td>{row['split']}</td></tr>"
+        for row in rows
+    )
 def money_split(amount: float, allocation: dict[str, str | int]) -> tuple[float, float]:
     stocks_amount = float(amount) * int(allocation["stocks_pct"]) / 100
     bonds_amount = float(amount) * int(allocation["bonds_pct"]) / 100
@@ -1082,6 +1160,7 @@ stocks_amount = analysis["stocks_amount"]
 bonds_amount = analysis["bonds_amount"]
 bullets = analysis["bullets"]
 reasoning_source = analysis.get("reasoning_source", "Fallback reasoning")
+allocation_rows = allocation_scenario_rows(allocation, result)
 
 st.markdown("## Model Outputs")
 card_cols = st.columns(5, gap="medium")
@@ -1117,7 +1196,7 @@ st.markdown(
         <div class="allocation-head">
             <div>
                 <div class="allocation-title">Allocation Guide</div>
-                <div class="allocation-subtitle">Current model/AI split plus common educational scenarios and purposes.</div>
+                <div class="allocation-subtitle">Current model/AI split, with each scenario dynamically tilted by the same market setup.</div>
             </div>
             <div>
                 <div class="allocation-current">{allocation['allocation']}</div>
@@ -1127,11 +1206,8 @@ st.markdown(
         <table class="allocation-table">
             <thead><tr><th>Situation</th><th>Purpose</th><th>Stock / Bond Split</th></tr></thead>
             <tbody>
-                <tr><td>Current CPI + model setup</td><td>Blend allocation rules, model output, and AI reasoning for this dashboard scenario.</td><td>{allocation['allocation']}</td></tr>
-                <tr><td>Young, long-term investing, 10+ years</td><td>Maximize long-run growth while accepting larger short-term swings.</td><td>80/20 or 90/10</td></tr>
-                <tr><td>Moderate risk, 5-10 years</td><td>Balance growth from stocks with stability from bonds.</td><td>60/40</td></tr>
-                <tr><td>Worried about short-term volatility or CPI shock</td><td>Reduce sensitivity to equity drawdowns and inflation-surprise volatility.</td><td>50/50 or 40/60</td></tr>
-                <tr><td>Need money within 1-3 years</td><td>Prioritize liquidity and capital preservation over stock-market upside.</td><td>Mostly cash, T-bills, money market, short-term bonds</td></tr>
+                {allocation_rows_html(allocation_rows)}
+
             </tbody>
         </table>
         <div class="allocation-note">{allocation['note']}. Educational research output only, not personalized financial advice.</div>
