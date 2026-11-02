@@ -5,19 +5,14 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
-
-from predict_helper import DATA_PATH, FEATURE_ORDER, directional_mse_loss, evaluate_models, load_data, load_models, predict
 
 
 load_dotenv()
 load_dotenv("app.env", override=False)
-globals()["directional_mse_loss"] = directional_mse_loss
 ALLOCATION_LOOKUP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "allocation_lookup.json")
 ALLOCATION_RULES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "allocation_rules.json")
 
@@ -233,8 +228,10 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def cached_data() -> pd.DataFrame:
+    from predict_helper import DATA_PATH, load_data
+
     return load_data(DATA_PATH)
 
 
@@ -310,10 +307,28 @@ def fetch_official_cpi_yoy() -> tuple[pd.DataFrame, str]:
         return pd.DataFrame(), "CSV fallback"
 
 
+@st.cache_resource(show_spinner=False)
+def market_data_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=3, thread_name_prefix="market-data")
+
+
+@st.cache_resource(ttl=900, show_spinner=False)
+def background_market_data() -> dict:
+    executor = market_data_executor()
+    return {
+        "cpi": executor.submit(fetch_official_cpi_yoy),
+        "spy": executor.submit(fetch_live_market_quote, "SPY"),
+        "vix": executor.submit(fetch_live_market_quote, "^VIX"),
+    }
+
+
 def cpi_trend_data(history: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    official_df, source = fetch_official_cpi_yoy()
-    if not official_df.empty:
-        return official_df, source
+    cpi_future = background_market_data()["cpi"]
+    source = "CSV context (BLS updating)"
+    if cpi_future.done():
+        official_df, source = cpi_future.result()
+        if not official_df.empty:
+            return official_df, source
     chart_df = history.sort_values("Release_Date").copy().tail(12)
     return chart_df[["Release_Date", "CPI_YoY"]], source
 
@@ -912,27 +927,8 @@ def openai_reasoning(actual_cpi: float, forecast_cpi: float, result: dict, lates
         return fallback_reasoning(actual_cpi, forecast_cpi, result, latest), "Fallback reasoning"
 
 
-history = cached_data()
-latest = history.sort_values("Release_Date").iloc[-1]
-default_actual_cpi = float(latest.get("CPI_YoY", 4.30))
-default_forecast_cpi = default_actual_cpi - float(latest.get("CPI_Surprise_Pct", 0.0))
-
 if "started" not in st.session_state:
     st.session_state.started = False
-if "actual_cpi" not in st.session_state:
-    st.session_state.actual_cpi = default_actual_cpi
-if "forecast_cpi" not in st.session_state:
-    st.session_state.forecast_cpi = default_forecast_cpi
-if "portfolio_amount" not in st.session_state:
-    st.session_state.portfolio_amount = 10000.0
-if "actual_cpi_slider" not in st.session_state:
-    st.session_state.actual_cpi_slider = st.session_state.actual_cpi
-if "actual_cpi_input" not in st.session_state:
-    st.session_state.actual_cpi_input = st.session_state.actual_cpi
-if "forecast_cpi_slider" not in st.session_state:
-    st.session_state.forecast_cpi_slider = st.session_state.forecast_cpi
-if "forecast_cpi_input" not in st.session_state:
-    st.session_state.forecast_cpi_input = st.session_state.forecast_cpi
 if "analysis" not in st.session_state:
     st.session_state.analysis = None
 
@@ -986,6 +982,54 @@ def clear_analysis() -> None:
     st.session_state.analysis = None
 
 
+@st.fragment(run_every="5s")
+def render_cpi_context(history: pd.DataFrame) -> None:
+    cpi_chart_df, cpi_source = cpi_trend_data(history)
+    latest_cpi_value = float(cpi_chart_df["CPI_YoY"].iloc[-1])
+    st.markdown(
+        f"""
+        <div class="sidebar-market-board">
+            <div class="market-board-title">Recent CPI Trend</div>
+            <div class="market-board-date">Past 12 months - latest {format_plain(latest_cpi_value)}% - {cpi_source}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(cpi_trend_chart(cpi_chart_df), use_container_width=True)
+    st.markdown(f"<div class='placeholder-box'>{cpi_trend_summary(cpi_chart_df, cpi_source)}</div>", unsafe_allow_html=True)
+
+
+@st.fragment(run_every="5s")
+def render_market_board(latest: pd.Series) -> None:
+    futures = background_market_data()
+    spy_quote = futures["spy"].result() if futures["spy"].done() else {}
+    vix_quote = futures["vix"].result() if futures["vix"].done() else {}
+    spx_return = spy_quote["change_pct"] if spy_quote.get("change_pct") is not None else latest.get("SP500_Daily_Return_Pct", latest.get("SP500_Return_Lag1", None))
+    spx_label = f"${spy_quote['price']:.2f}" if spy_quote.get("price") is not None else "CSV"
+    spx_class = "good" if pd.notna(spx_return) and float(spx_return) >= 0 else "bad"
+    vix_value = vix_quote["change_pct"] if vix_quote.get("change_pct") is not None else latest.get("VIX_Return_Pct", None)
+    vix_label = f"{vix_quote['price']:.2f}" if vix_quote.get("price") is not None else "CSV"
+    vix_class = "bad" if pd.notna(vix_value) and float(vix_value) >= 0 else "good"
+    live_source = "Yahoo Finance quotes" if spy_quote.get("price") is not None or vix_quote.get("price") is not None else "CSV fallback"
+    if not futures["spy"].done() or not futures["vix"].done():
+        live_source += " (quotes updating)"
+    st.markdown(
+        f"""
+        <div class="sidebar-market-board">
+            <div class="market-board-title">Live Market Board</div>
+            <div class="market-board-date">{live_source} - CPI/Fed from CSV {latest['Release_Date'].date()}</div>
+            <div class="market-stat-row"><span>{term('SPY Price', 'The price of SPY, an ETF commonly used as a tradable proxy for the S&P 500.')}</span><strong>{spx_label}</strong></div>
+            <div class="market-stat-row"><span>{term('SPY 1D Change', 'The one-day percent move in SPY. Positive means the S&P 500 proxy is rising today.')}</span><strong class="{spx_class}">{format_pct(spx_return)}</strong></div>
+            <div class="market-stat-row"><span>{term('VIX Level', 'The VIX is a market volatility index. Higher values usually mean investors expect more uncertainty.')}</span><strong>{vix_label}</strong></div>
+            <div class="market-stat-row"><span>{term('VIX 1D Change', 'The one-day percent move in the VIX. A falling VIX often signals calmer market conditions.')}</span><strong class="{vix_class}">{format_pct(vix_value)}</strong></div>
+            <div class="market-stat-row"><span>{term('Fed Funds', 'The Federal Funds Rate is the short-term policy rate influenced by the Federal Reserve.')}</span><strong>{format_plain(latest.get('FedFunds_Rate'))}%</strong></div>
+            <div class="market-stat-row"><span>{term('Latest CPI YoY', 'The latest year-over-year inflation reading from the CPI data used by the model context.')}</span><strong>{format_plain(latest.get('CPI_YoY'))}%</strong></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 show_intro = st.session_state.analysis is None
 
 if show_intro:
@@ -1012,22 +1056,34 @@ if not st.session_state.started:
     st.button("Start Analysis", use_container_width=True, on_click=start_app)
     st.stop()
 
+# Import the data and ML stack only after the visitor opens the dashboard.
+import pandas as pd
+import plotly.graph_objects as go
+
+history = cached_data()
+latest = history.sort_values("Release_Date").iloc[-1]
+default_actual_cpi = float(latest.get("CPI_YoY", 4.30))
+default_forecast_cpi = default_actual_cpi - float(latest.get("CPI_Surprise_Pct", 0.0))
+
+if "actual_cpi" not in st.session_state:
+    st.session_state.actual_cpi = default_actual_cpi
+if "forecast_cpi" not in st.session_state:
+    st.session_state.forecast_cpi = default_forecast_cpi
+if "portfolio_amount" not in st.session_state:
+    st.session_state.portfolio_amount = 10000.0
+if "actual_cpi_slider" not in st.session_state:
+    st.session_state.actual_cpi_slider = st.session_state.actual_cpi
+if "actual_cpi_input" not in st.session_state:
+    st.session_state.actual_cpi_input = st.session_state.actual_cpi
+if "forecast_cpi_slider" not in st.session_state:
+    st.session_state.forecast_cpi_slider = st.session_state.forecast_cpi
+if "forecast_cpi_input" not in st.session_state:
+    st.session_state.forecast_cpi_input = st.session_state.forecast_cpi
+
 with st.sidebar:
     st.markdown("## Analysis Flow")
     st.markdown("<div class='status-strip'>STEP 01 / CPI CONTEXT</div>", unsafe_allow_html=True)
-    cpi_chart_df, cpi_source = cpi_trend_data(history)
-    latest_cpi_value = float(cpi_chart_df["CPI_YoY"].iloc[-1]) if not cpi_chart_df.empty else latest.get("CPI_YoY")
-    st.markdown(
-        f"""
-        <div class="sidebar-market-board">
-            <div class="market-board-title">Recent CPI Trend</div>
-            <div class="market-board-date">Past 12 months - latest {format_plain(latest_cpi_value)}% - {cpi_source}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.plotly_chart(cpi_trend_chart(cpi_chart_df), use_container_width=True)
-    st.markdown(f"<div class='placeholder-box'>{cpi_trend_summary(cpi_chart_df, cpi_source)}</div>", unsafe_allow_html=True)
+    render_cpi_context(history)
 
     st.markdown("<div class='status-strip'>STEP 02 / INPUT SCENARIO</div>", unsafe_allow_html=True)
     st.slider(
@@ -1082,30 +1138,7 @@ with st.sidebar:
     )
 
     st.markdown("<div class='status-strip'>STEP 03 / LIVE MARKET BOARD</div>", unsafe_allow_html=True)
-    spy_quote = fetch_live_market_quote("SPY")
-    vix_quote = fetch_live_market_quote("^VIX")
-    spx_return = spy_quote["change_pct"] if spy_quote.get("change_pct") is not None else latest.get("SP500_Daily_Return_Pct", latest.get("SP500_Return_Lag1", None))
-    spx_label = f"${spy_quote['price']:.2f}" if spy_quote.get("price") is not None else "CSV"
-    spx_class = "good" if pd.notna(spx_return) and float(spx_return) >= 0 else "bad"
-    vix_value = vix_quote["change_pct"] if vix_quote.get("change_pct") is not None else latest.get("VIX_Return_Pct", None)
-    vix_label = f"{vix_quote['price']:.2f}" if vix_quote.get("price") is not None else "CSV"
-    vix_class = "bad" if pd.notna(vix_value) and float(vix_value) >= 0 else "good"
-    live_source = "Live: Yahoo Finance" if spy_quote.get("price") is not None or vix_quote.get("price") is not None else "CSV fallback"
-    st.markdown(
-        f"""
-        <div class="sidebar-market-board">
-            <div class="market-board-title">Live Market Board</div>
-            <div class="market-board-date">{live_source} - CPI/Fed from CSV {latest['Release_Date'].date()}</div>
-            <div class="market-stat-row"><span>{term('SPY Price', 'The live price of SPY, an ETF commonly used as a tradable proxy for the S&P 500.')}</span><strong>{spx_label}</strong></div>
-            <div class="market-stat-row"><span>{term('SPY 1D Change', 'The one-day percent move in SPY. Positive means the S&P 500 proxy is rising today.')}</span><strong class="{spx_class}">{format_pct(spx_return)}</strong></div>
-            <div class="market-stat-row"><span>{term('VIX Level', 'The VIX is a market volatility index. Higher values usually mean investors expect more uncertainty.')}</span><strong>{vix_label}</strong></div>
-            <div class="market-stat-row"><span>{term('VIX 1D Change', 'The one-day percent move in the VIX. A falling VIX often signals calmer market conditions.')}</span><strong class="{vix_class}">{format_pct(vix_value)}</strong></div>
-            <div class="market-stat-row"><span>{term('Fed Funds', 'The Federal Funds Rate is the short-term policy rate influenced by the Federal Reserve.')}</span><strong>{format_plain(latest.get('FedFunds_Rate'))}%</strong></div>
-            <div class="market-stat-row"><span>{term('Latest CPI YoY', 'The latest year-over-year inflation reading from the CPI data used by the model context.')}</span><strong>{format_plain(latest.get('CPI_YoY'))}%</strong></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    render_market_board(latest)
 
     st.markdown("<div class='status-strip'>STEP 04 / CONFIRM RUN</div>", unsafe_allow_html=True)
     run_analysis = st.button("Confirm & Run Models", use_container_width=True)
@@ -1115,6 +1148,8 @@ forecast_cpi = float(st.session_state.forecast_cpi)
 portfolio_amount = float(st.session_state.portfolio_amount)
 
 if run_analysis:
+    from predict_helper import predict
+
     result = predict(actual_cpi=actual_cpi, forecast_cpi=forecast_cpi, recent_data=history)
     actual_surprise = float(result["actual_surprise"])
     base_allocation = allocation_signal(result, latest, actual_cpi)
@@ -1237,8 +1272,7 @@ with reason_col:
 
 with diag_col:
     st.markdown(f"## {term('Model Diagnostics', 'Simple model quality and feature-importance checks from the available CSV rows.')}", unsafe_allow_html=True)
-    acc = evaluate_models(load_models(), history)
-    result["model_accuracy"] = acc
+    acc = result["model_accuracy"]
     acc_cols = st.columns(2)
     with acc_cols[0]:
         metric_card(

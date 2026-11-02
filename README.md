@@ -1,5 +1,7 @@
 # CPI x SPX Impact Dashboard
 
+[Open the live dashboard](https://predict-sp500.onrender.com/)
+
 A Streamlit dashboard that helps first-time investing users understand how CPI surprises may affect the S&P 500 and a simple educational stock/bond allocation tilt.
 
 The app combines:
@@ -191,7 +193,33 @@ This is a research and education prototype. The stock/bond split is a model-base
 
 The app is designed for first-time investing users, so UI tooltips explain terms like CPI, SPY, VIX, Fed Funds, and SPX reaction.
 
-## Deploying Later
+## Hosting On Render
+
+The deployed app is available at <https://predict-sp500.onrender.com/>.
+This is a Python/Streamlit web service, so GitHub Pages cannot run the ML models
+or the server-side OpenAI calls.
+
+For a Render web service connected to this repository, use:
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `python -m streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true --browser.gatherUsageStats false`
+- Health check path: `/_stcore/health`
+- Environment variables: `OPENAI_API_KEY` and optionally `OPENAI_MODEL`
+
+Set secrets in Render's Environment settings; do not upload `app.env`.
+
+The introduction renders before the data/ML imports. BLS and Yahoo requests run
+in the background, and the sidebar initially uses clearly labeled CSV context.
+The CPI chart and market board update independently as responses arrive, so
+slow data providers do not block the scenario inputs or confirmation button.
+
+Render's free web services sleep after 15 minutes without inbound traffic and
+can take about a minute to wake. These app optimizations do not remove that
+hosting delay. An always-running paid instance avoids idle spin-down; changing
+the instance plan requires choosing it in Render and may incur charges.
+See [Render's free-service documentation](https://render.com/docs/free).
+
+## Alternative: Streamlit Cloud
 
 For Streamlit Cloud:
 

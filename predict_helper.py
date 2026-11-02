@@ -7,10 +7,8 @@ import warnings
 from functools import lru_cache
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.exceptions import InconsistentVersionWarning
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,7 +52,6 @@ def directional_mse_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 setattr(sys.modules["__main__"], "directional_mse_loss", directional_mse_loss)
-warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 
 
 def load_data(path: str = DATA_PATH) -> pd.DataFrame:
@@ -113,6 +110,10 @@ def _load_pickle_model(path: str) -> Any:
 
 @lru_cache(maxsize=1)
 def load_models() -> dict[str, Any]:
+    import joblib
+    from sklearn.exceptions import InconsistentVersionWarning
+
+    warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
     loaded_formats: dict[str, str] = {}
 
     try:
