@@ -1,9 +1,9 @@
-streamlit>=1.37
+streamlit==1.58.0
 pandas>=2.0
 numpy>=1.24
 scikit-learn==1.6.1
 xgboost>=2.0
-plotly>=5.20
+plotly==6.8.0
 python-dotenv>=1.0
 openai>=1.59
 joblib>=1.3
