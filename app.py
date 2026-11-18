@@ -350,6 +350,7 @@ def cpi_trend_summary(chart_df: pd.DataFrame, source: str) -> str:
 
 def cpi_trend_chart(chart_df: pd.DataFrame) -> go.Figure:
     chart_df = chart_df.sort_values("Release_Date").copy()
+    first_date = chart_df["Release_Date"].iloc[0]
     latest_row = chart_df.iloc[-1]
 
     fig = go.Figure()
@@ -378,13 +379,24 @@ def cpi_trend_chart(chart_df: pd.DataFrame) -> go.Figure:
         )
     )
     fig.update_layout(
-        height=210,
-        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        height=260,
+        margin={"l": 44, "r": 24, "t": 32, "b": 64},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(2,6,23,0.42)",
         font={"color": "#cbd5e1", "family": "Inter, Segoe UI, sans-serif"},
         showlegend=False,
-        xaxis={"showgrid": False, "tickfont": {"color": "#93a4b8", "size": 10}, "title": None},
+        xaxis={
+            "type": "date",
+            "tick0": first_date.to_period("M").to_timestamp(),
+            "dtick": "M3",
+            "tickformat": "%b<br>%Y",
+            "tickangle": 0,
+            "tickfont": {"color": "#cbd5e1", "size": 10},
+            "automargin": True,
+            "range": [first_date - pd.Timedelta(days=12), latest_row["Release_Date"] + pd.Timedelta(days=20)],
+            "showgrid": False,
+            "title": None,
+        },
         yaxis={"title": None, "ticksuffix": "%", "gridcolor": "rgba(148,163,184,0.16)", "zeroline": False, "tickfont": {"color": "#93a4b8", "size": 10}},
     )
     return fig
@@ -1296,4 +1308,5 @@ with diag_col:
 
     st.caption(f"Allocation note: {allocation['note']}.")
     st.caption("Research prototype only. Allocation tilt is a model-based educational signal, not personalized investment advice.")
+
 
